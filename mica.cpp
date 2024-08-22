@@ -50,6 +50,7 @@ INT64 interval_ins_count;
 INT64 interval_ins_count_for_hpc_alignment;
 INT64 total_ins_count;
 INT64 total_ins_count_for_hpc_alignment;
+INT64 total_ins_count_in_region; //zkn this is used for just when region is on
 
 ins_buffer_entry* ins_buffer[MAX_MEM_TABLE_ENTRIES];
 
@@ -68,6 +69,13 @@ int append_pid;
 
 /* helper */
 int thread_count = 0;
+
+/* global ROI
+ * Declares the "profiling on" global variable, isRoi
+ * Also strings for the functions to call*/
+bool isRoi = false;
+const CHAR* ROI_BEGIN = "__begin_pin_roi";
+const CHAR* ROI_END   = "__end_pin_roi";
 
 /**********************************************
  *                    MAIN                    *
@@ -512,6 +520,43 @@ VOID ThreadStart(THREADID id, CONTEXT *context, INT32 flags, VOID *data)
 	}
 }
 
+/* start the roi */
+VOID beginRoi(){
+  isRoi = true;
+  cout << "<<Pin>> begining Roi" << std::endl;
+}
+
+/* end the roi */
+VOID endRoi(){
+  isRoi = false;
+  cout << "<<Pin>> leaving Roi" << std::endl;
+}
+
+/* instruments zkn. this function checks for a function name, specified as a 
+ * global here ROI_BEGIN. if it has that name, then we set the
+ * isRoi variable
+ *
+ * THERE WAS A MISCONCEPTION. This runs when you are parsing the function, not
+ * when the function is called. We instrument the function so that when it is
+ * called, it sets the ROI. This function adds the hook*/
+static VOID checkForRoiStart(RTN rtn, VOID *)
+{
+    // Get routine name
+    //const CHAR * name = RTN_Name(rtn).c_str();
+    //std::cerr << "running on function call to " << name << std::endl;
+    if(RTN_Name(rtn).find(ROI_BEGIN) != std::string::npos) {
+        //begin collection
+        // Start tracing after ROI begin exec
+        RTN_Open(rtn);
+        RTN_InsertCall(rtn, IPOINT_AFTER, (AFUNPTR)beginRoi, IARG_END);
+        RTN_Close(rtn);
+    } else if (RTN_Name(rtn).find(ROI_END) != std::string::npos) {
+        // Stop tracing before ROI end exec
+        RTN_Open(rtn);
+        RTN_InsertCall(rtn, IPOINT_AFTER, (AFUNPTR)endRoi, IARG_END);
+        RTN_Close(rtn);
+    }
+}
 
 /************
  *   MAIN   *
@@ -557,7 +602,10 @@ int main(int argc, char* argv[]){
 			break;
 		case MODE_ITYPES:
 			init_itypes();
+      PIN_InitSymbols(); //zkn
 			PIN_Init(argc, argv);
+			RTN_AddInstrumentFunction(checkForRoiStart, 0); //zkn. register function
+                                                      //for instrumentation
 			INS_AddInstrumentFunction(Instruction_itypes_only, 0);
 			PIN_AddFiniFunction(Fini_itypes_only, 0);
 			break;

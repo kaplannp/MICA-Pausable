@@ -20,7 +20,9 @@ extern INT64 interval_ins_count;
 extern INT64 interval_ins_count_for_hpc_alignment;
 extern INT64 total_ins_count;
 extern INT64 total_ins_count_for_hpc_alignment;
+extern INT64 total_ins_count_in_region; //zkn 
 extern char* _itypes_spec_file;
+extern bool isRoi;
 
 ofstream output_file_itypes;
 
@@ -65,7 +67,9 @@ VOID itypes_instr_interval(){
 }
 
 VOID itypes_count(UINT32 gid){
-	group_counts[gid]++;
+  if (isRoi){
+    group_counts[gid]++;
+  }
 };
 
 // initialize default groups
@@ -314,9 +318,17 @@ VOID init_itypes(){
 	}
 }
 
+VOID inc_total_counts(){
+  if (isRoi){
+    total_ins_count_in_region++; //zkn increment the counts of this region
+  }
+}
+
 /* instrumenting (instruction level) */
 VOID instrument_itypes(INS ins, VOID* v){
 
+  //std::cerr << "<<PIN>> instruction instrumented and isRoi = " << isRoi << std::endl;
+ INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)inc_total_counts, IARG_END);
 	int i,j;
 	char cat[50];
 	char opcode[50];
@@ -419,7 +431,9 @@ VOID fini_itypes(INT32 code, VOID* v){
 
 	if(interval_size == -1){
 		output_file_itypes.open(mkfilename("itypes_full_int"), ios::out|ios::trunc);
-		output_file_itypes << total_ins_count_for_hpc_alignment << " " << total_ins_count;
+    //zkn this is modified to put out the ins count, not the complete coutn aof
+    //all instructions
+		output_file_itypes << total_ins_count_in_region;
 		for(i=0; i < number_of_groups; i++){
 			output_file_itypes << " " << group_counts[i];
 		}
