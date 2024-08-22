@@ -1,3 +1,4 @@
+#unfortunately, comments are not permitted,but I left this as documentation
 #memory
 0, 0, SPECIAL, mem_read
 0, 1, SPECIAL, mem_write
