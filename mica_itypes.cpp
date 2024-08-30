@@ -6,6 +6,8 @@
  * Please see the README.txt file distributed with the MICA release for more
  * information.
  */
+#include <set>
+#include <string>
 
 #include "pin.H"
 
@@ -34,6 +36,7 @@ INT64 number_of_groups;
 INT64 other_ids_cnt;
 INT64 other_ids_max_cnt;
 identifier* other_group_identifiers;
+std::set<std::string> other_cat_ext_pairs;
 
 /* counter functions */
 ADDRINT itypes_instr_intervals(){
@@ -72,10 +75,15 @@ VOID itypes_count(UINT32 gid){
   }
 };
 
+
+
 // initialize default groups
 VOID init_itypes_default_groups(){
 
-	number_of_groups = 12;
+  cerr << "<<From Noah zkn>> There seems to be some problem with default groups"
+       << " I would suggest you just use the group ids yourself in a spec file"
+       << std::endl;
+  number_of_groups = 12;
 
 	group_identifiers = (identifier**)checked_malloc((number_of_groups+1)*sizeof(identifier*));
 	group_ids_cnt = (INT64*)checked_malloc((number_of_groups+1)*sizeof(INT64));
@@ -205,7 +213,19 @@ VOID init_itypes(){
 	string line;
 
 	/* try and open instruction groups specification file */
-	if(_itypes_spec_file != NULL){
+  if(_itypes_spec_file == NULL){
+		// if no specification file was found, just use defaults (compatible with MICA v0.23 and older)
+		init_itypes_default_groups();
+	} else if (strcmp(_itypes_spec_file, "hierarchical") == 0){
+    //This is a hardcoded analysis type that does not follow the standardized
+    //MICA counts. Instead it has 7 groups NOP, MEMORY, VECTOR, CTRL, REGISTER,
+    //FLOAT, and SCALAR
+    number_of_groups = 8;
+		group_counts = (INT64*)checked_malloc((number_of_groups+1)*sizeof(INT64));
+		for(i=0; i < number_of_groups+1; i++){
+			group_counts[i] = 0;
+		}
+  } else{
 		ifstream f(_itypes_spec_file);
 		if(f){
 			// count number of groups
@@ -270,39 +290,41 @@ VOID init_itypes(){
 			}
 			f.close();
 
-			// print out groups read
-			for(i=0; i < number_of_groups; i++){
-				cerr << "   group " << i << " (#: " << group_ids_cnt[i] << "): ";
-				for(j=0; j < group_ids_cnt[i]; j++){
-					cerr << group_identifiers[i][j].str << " ";
-					switch(group_identifiers[i][j].type){
-						case identifier_type::ID_TYPE_CATEGORY:
-							cerr << "[CAT]; ";
-							break;
-						case identifier_type::ID_TYPE_OPCODE:
-							cerr << "[OPCODE]; ";
-							break;
-						case identifier_type::ID_TYPE_SPECIAL:
-							cerr << "[SPECIAL]; ";
-							break;
-						default:
-							cerr << "ERROR! Unknown subgroup type found for [" << i << "][" << j << "] (\"" << group_identifiers[i][j].type << "\")." << endl;
-							cerr << "   Known subgroup types: {CATEGORY, OPCODE, SPECIAL}." << endl;
-							exit(-1);
-							break;
-					}
-				}
-				cerr << endl;
-			}
+      if (strcmp(_itypes_spec_file, "hierarchical") == 0){
+        cerr << "<<MICA-PIN>> Running in hierarchical mode." << endl;
+        cerr << "<<MICA-PIN>> Categories are [NOP, MEMORY, VECTOR, CTRL, "
+             << "REGISTER, FLOAT, SCALAR]" << endl;
+      } else {
+        // print out groups read
+        for(i=0; i < number_of_groups; i++){
+          cerr << "   group " << i << " (#: " << group_ids_cnt[i] << "): ";
+          for(j=0; j < group_ids_cnt[i]; j++){
+            cerr << group_identifiers[i][j].str << " ";
+            switch(group_identifiers[i][j].type){
+              case identifier_type::ID_TYPE_CATEGORY:
+                cerr << "[CAT]; ";
+                break;
+              case identifier_type::ID_TYPE_OPCODE:
+                cerr << "[OPCODE]; ";
+                break;
+              case identifier_type::ID_TYPE_SPECIAL:
+                cerr << "[SPECIAL]; ";
+                break;
+              default:
+                cerr << "ERROR! Unknown subgroup type found for [" << i << "][" << j << "] (\"" << group_identifiers[i][j].type << "\")." << endl;
+                cerr << "   Known subgroup types: {CATEGORY, OPCODE, SPECIAL}." << endl;
+                exit(-1);
+                break;
+            }
+          }
+          cerr << endl;
+        }
+      }
 		}
 		else{
 			cerr << "ERROR! Failed to open file \"" << _itypes_spec_file << "\" containing instruction groups specification." << endl;
 			exit(-1);
-		}
-	}
-	else{
-		// if no specification file was found, just use defaults (compatible with MICA v0.23 and older)
-		init_itypes_default_groups();
+    }
 	}
 
 	// allocate space for identifiers of 'other' group
@@ -324,11 +346,121 @@ VOID inc_total_counts(){
   }
 }
 
+BOOL isRegTransfer(INS ins){
+  UINT32 flag=1,n;
+  if( INS_IsMov(ins) ){
+    flag = 0;
+    n=INS_OperandCount(ins);
+    for(UINT32 i=0;i<n;i++){
+        if(!INS_OperandIsReg(ins,i)){
+        flag=1;
+        break;
+        }
+    }
+  }
+  return !flag;
+}
+
+/*
+ * If you would like
+ * to get an exclusive count, you may use this default initialization. It
+ * assigns instructions according to the following algorithm in the following
+ * order. Each instruction
+ * only fits one category, that is, if it would be assigned to multiple, we
+ * only make one count, the one with the highest precedence
+ * NOP:       (category is NOP, WIDENOP) || 
+ *            (opcode is FSETPM287_NOP, FNOP, FENI8087_NOP, FDISI8087_NOP)
+ *            please note that this does not include PREFETCH_NOP
+ * MEMORY:    INS_IsMemoryRead() || INS_IsMemoryWrite()
+ *            These functions are both provided by intel in the pin toolkit
+ * VECTOR:    (Extension is MMX, SSE4, SSE3, SSE2, SSE, AVX, AVX2, AVX2GATHER)
+ * CTRL:      INS_IsControlFlow()
+ *            provided by intel with pin
+ * REGISTER:  We use the MICA function. This function is derived by using
+ *            intel's instruction to check if it is a move instruction, and then
+ *            checking to ensure the operands are registers and not mem. (at a
+ *            glance. Read the function to be sure)
+ * FLOAT:     (category is X87_ALU)
+ *            Not great. This includes a lot of things which aren't just fp
+ *            addition as you would expect, but what can you do
+ * SCALAR:    (category is LOGICAL, BMI1, BMI2, SHIFT, BINARY, BITBYTE, DECIMAL)
+ *            This is a bit of a catch all. Hopefully for the logical vector
+ *            instructions for example will have been filtered by this point
+ * OTHER:     everything else
+ *             
+ */
+VOID instrument_itypes_hierarchical(INS ins){
+	char cat[50];
+	char opcode[50];
+  char ext[50];
+	strcpy(cat,CATEGORY_StringShort(INS_Category(ins)).c_str());
+	strcpy(opcode,INS_Mnemonic(ins).c_str());
+	strcpy(ext,EXTENSION_StringShort(INS_Extension(ins)).c_str());
+
+  //check if is nop
+  if(strcmp("NOP", cat) == 0 ||
+     strcmp("WIDENOP", cat) == 0){
+		 INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 0, IARG_END);
+  //check if it is a memory access
+  } else if (INS_IsMemoryRead(ins) || INS_IsMemoryWrite(ins)) {
+	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 1, IARG_END);
+  //Check is float
+  } else if (strcmp("X87_ALU", cat) == 0 ||
+             strcmp("LOGICAL_FP", cat) == 0){
+	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 2, IARG_END);
+  //check if it is a vector instruction
+  } else if (
+      strcmp("MMX", ext) == 0 ||
+      strcmp("SSE4", ext) == 0 ||
+      strcmp("SSE3", ext) == 0 ||
+      strcmp("SSE2", ext) == 0 ||
+      strcmp("SSE", ext) == 0 ||
+      strcmp("AVX", ext) == 0 ||
+      strcmp("AVX2", ext) == 0 ||
+      strcmp("AVX2GATHER", ext) == 0){
+	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 3, IARG_END);
+  //check if it is control instruction
+  } else if (INS_IsControlFlow(ins)){
+	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 4, IARG_END);
+  //check if it is register
+  } else if (isRegTransfer(ins)){
+	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 5, IARG_END);
+  //check is scalar
+  } else if (
+      strcmp("LOGICAL", cat) == 0 ||
+      strcmp("BMI1", cat) == 0 ||
+      strcmp("BMI2", cat) == 0 ||
+      strcmp("SHIFT", cat) == 0 ||
+      strcmp("BINARY", cat) == 0 ||
+      strcmp("BITBYTE", cat) == 0 ||
+      strcmp("DECIMAL", cat) == 0){
+	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 6, IARG_END);
+  //Else we dump it into other
+  } else {
+	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 7, IARG_END);
+    //I recommend you create other_group_identifiers as a set instead of 
+    //pointer. You may then add instructions here
+    std::string stager = ("");
+    stager += ext; stager += "-"; stager += cat;
+    other_cat_ext_pairs.insert(stager);
+  }
+}
+
+
+
+
 /* instrumenting (instruction level) */
 VOID instrument_itypes(INS ins, VOID* v){
 
   //std::cerr << "<<PIN>> instruction instrumented and isRoi = " << isRoi << std::endl;
- INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)inc_total_counts, IARG_END);
+  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)inc_total_counts, IARG_END);
+
+  //zkn doing hierarchical decoding. The rest of the code will not be run
+  if (strcmp(_itypes_spec_file, "hierarchical") == 0){
+    instrument_itypes_hierarchical(ins);
+    return;
+  }
+
 	int i,j;
 	char cat[50];
 	char opcode[50];
@@ -417,6 +549,7 @@ VOID instrument_itypes(INS ins, VOID* v){
 		}
 	}
 
+  //zkn note these are not supported for mica hierarchical analysis
 	/* inserting calls for counting instructions is done in mica.cpp */
 	if(interval_size != -1){
 		INS_InsertIfCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_instr_intervals,IARG_END);
@@ -454,7 +587,14 @@ VOID fini_itypes(INT32 code, VOID* v){
 	// print instruction categories in 'other' group of instructions
 	ofstream output_file_other_group_categories;
 	output_file_other_group_categories.open("itypes_other_group_categories.txt", ios::out|ios::trunc);
-	for(i=0; i < other_ids_cnt; i++){
-		output_file_other_group_categories << other_group_identifiers[i].str << endl;
-	}
+	if (strcmp(_itypes_spec_file, "hierarchical") == 0){
+    //in this case we dump category extension pairs instead of just categories
+    for( string str : other_cat_ext_pairs){
+		  output_file_other_group_categories << str << endl;
+    }
+  } else {
+    for(i=0; i < other_ids_cnt; i++){
+      output_file_other_group_categories << other_group_identifiers[i].str << endl;
+    }
+  }
 }
