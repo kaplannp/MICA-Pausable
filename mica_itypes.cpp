@@ -368,11 +368,13 @@ BOOL isRegTransfer(INS ins){
  * order. Each instruction
  * only fits one category, that is, if it would be assigned to multiple, we
  * only make one count, the one with the highest precedence
- * NOP:       (category is NOP, WIDENOP) || 
- *            (opcode is FSETPM287_NOP, FNOP, FENI8087_NOP, FDISI8087_NOP)
+ * NOP:       (category is NOP || WIDENOP)
  *            please note that this does not include PREFETCH_NOP
  * MEMORY:    INS_IsMemoryRead() || INS_IsMemoryWrite()
  *            These functions are both provided by intel in the pin toolkit
+ * FLOAT:     (category is X87_ALU or LOGICAL_FP)
+ *            Not great. This includes a lot of things which aren't just fp
+ *            addition as you would expect, but what can you do
  * VECTOR:    (Extension is MMX, SSE4, SSE3, SSE2, SSE, AVX, AVX2, AVX2GATHER)
  * CTRL:      INS_IsControlFlow()
  *            provided by intel with pin
@@ -380,9 +382,6 @@ BOOL isRegTransfer(INS ins){
  *            intel's instruction to check if it is a move instruction, and then
  *            checking to ensure the operands are registers and not mem. (at a
  *            glance. Read the function to be sure)
- * FLOAT:     (category is X87_ALU)
- *            Not great. This includes a lot of things which aren't just fp
- *            addition as you would expect, but what can you do
  * SCALAR:    (category is LOGICAL, BMI1, BMI2, SHIFT, BINARY, BITBYTE, DECIMAL)
  *            This is a bit of a catch all. Hopefully for the logical vector
  *            instructions for example will have been filtered by this point
