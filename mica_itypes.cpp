@@ -218,9 +218,10 @@ VOID init_itypes(){
 		init_itypes_default_groups();
 	} else if (strcmp(_itypes_spec_file, "hierarchical") == 0){
     //This is a hardcoded analysis type that does not follow the standardized
-    //MICA counts. Instead it has 7 groups NOP, MEMORY, VECTOR, CTRL, REGISTER,
-    //FLOAT, and SCALAR
-    number_of_groups = 8;
+    //MICA counts. Instead it has the groups NOP, VEC-MEM, MEMORY, FLOAT, VECTOR, 
+    //CTRL, REGISTER, SCALAR, OTHER (and total of course, which is handled
+    //seperately)
+    number_of_groups = 9;
 		group_counts = (INT64*)checked_malloc((number_of_groups+1)*sizeof(INT64));
 		for(i=0; i < number_of_groups+1; i++){
 			group_counts[i] = 0;
@@ -370,6 +371,10 @@ BOOL isRegTransfer(INS ins){
  * only make one count, the one with the highest precedence
  * NOP:       (category is NOP || WIDENOP)
  *            please note that this does not include PREFETCH_NOP
+ * VEC-MEM:   basically is memory and vector instruction:
+ *            (INS_IsMemoryRead() || INS_IsMemoryWrite())
+ *            &&
+ *            (Extension is MMX, SSE4, SSE3, SSE2, SSE, AVX, AVX2, AVX2GATHER)
  * MEMORY:    INS_IsMemoryRead() || INS_IsMemoryWrite()
  *            These functions are both provided by intel in the pin toolkit
  * FLOAT:     (category is X87_ALU or LOGICAL_FP)
@@ -400,13 +405,27 @@ VOID instrument_itypes_hierarchical(INS ins){
   if(strcmp("NOP", cat) == 0 ||
      strcmp("WIDENOP", cat) == 0){
 		 INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 0, IARG_END);
+  //check if is vec and mem
+  } else if (
+               (INS_IsMemoryRead(ins) || INS_IsMemoryWrite(ins))
+             &&
+               (strcmp("MMX", ext) == 0 ||
+                strcmp("SSE4", ext) == 0 ||
+                strcmp("SSE3", ext) == 0 ||
+                strcmp("SSE2", ext) == 0 ||
+                strcmp("SSE", ext) == 0 ||
+                strcmp("AVX", ext) == 0 ||
+                strcmp("AVX2", ext) == 0 ||
+                strcmp("AVX2GATHER", ext) == 0)
+            ){
+    INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 1, IARG_END);
   //check if it is a memory access
   } else if (INS_IsMemoryRead(ins) || INS_IsMemoryWrite(ins)) {
-	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 1, IARG_END);
+	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 2, IARG_END);
   //Check is float
   } else if (strcmp("X87_ALU", cat) == 0 ||
              strcmp("LOGICAL_FP", cat) == 0){
-	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 2, IARG_END);
+	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 3, IARG_END);
   //check if it is a vector instruction
   } else if (
       strcmp("MMX", ext) == 0 ||
@@ -417,13 +436,13 @@ VOID instrument_itypes_hierarchical(INS ins){
       strcmp("AVX", ext) == 0 ||
       strcmp("AVX2", ext) == 0 ||
       strcmp("AVX2GATHER", ext) == 0){
-	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 3, IARG_END);
+	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 4, IARG_END);
   //check if it is control instruction
   } else if (INS_IsControlFlow(ins)){
-	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 4, IARG_END);
+	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 5, IARG_END);
   //check if it is register
   } else if (isRegTransfer(ins)){
-	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 5, IARG_END);
+	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 6, IARG_END);
   //check is scalar
   } else if (
       strcmp("LOGICAL", cat) == 0 ||
@@ -433,10 +452,10 @@ VOID instrument_itypes_hierarchical(INS ins){
       strcmp("BINARY", cat) == 0 ||
       strcmp("BITBYTE", cat) == 0 ||
       strcmp("DECIMAL", cat) == 0){
-	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 6, IARG_END);
+	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 7, IARG_END);
   //Else we dump it into other
   } else {
-	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 7, IARG_END);
+	  INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)itypes_count, IARG_UINT32, 8, IARG_END);
     //I recommend you create other_group_identifiers as a set instead of 
     //pointer. You may then add instructions here
     std::string stager = ("");
